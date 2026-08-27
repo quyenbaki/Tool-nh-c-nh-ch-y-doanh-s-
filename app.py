@@ -133,7 +133,9 @@ with tab1:
                         preview_df[col] = preview_df[col].apply(
                             lambda x: f"{int(round(x)):,}".replace(",", ".") if pd.notna(x) and isinstance(x, (int, float)) else x
                         )
+                preview_df.index = np.arange(1, len(preview_df) + 1)
                 st.dataframe(preview_df)
+
 
                 
                 # Let user download the filtered Excel directly
@@ -232,13 +234,16 @@ with tab2:
             'Tổng cuộc gọi', 'Gọi Thành công', 'Gọi Không thành công', 
             'Trạng thái cuối', 'm1s_user_name', 'm3s_user_name'
         ]
-        st.dataframe(df_display[display_cols].rename(columns={
+        df_render = df_display[display_cols].rename(columns={
             'username': 'Tài khoản',
             'phone': 'Số điện thoại',
             'danh_hieu_chay': 'Danh hiệu chạy',
             'm1s_user_name': 'M1s User',
             'm3s_user_name': 'M3s User'
-        }), use_container_width=True)
+        })
+        df_render.index = np.arange(1, len(df_render) + 1)
+        st.dataframe(df_render, use_container_width=True)
+
         
         # Single log form vs Batch upload
         st.markdown("---")
@@ -437,9 +442,12 @@ with tab3:
             # Convert to displayable form
             df_success_disp = df_success_called.copy()
             df_success_disp['is_achieved'] = df_success_disp['is_achieved'].map({1: 'Đạt', 0: 'Không đạt'})
-            st.dataframe(df_success_disp[['username', 'phone', 'danh_hieu_chay', 'is_achieved']].rename(columns={
+            df_success_render = df_success_disp[['username', 'phone', 'danh_hieu_chay', 'is_achieved']].rename(columns={
                 'username': 'Tài khoản', 'phone': 'Số điện thoại', 'danh_hieu_chay': 'Danh hiệu chạy', 'is_achieved': 'Đạt ngày 5'
-            }), height=300)
+            })
+            df_success_render.index = np.arange(1, len(df_success_render) + 1)
+            st.dataframe(df_success_render, height=300)
+
             
             # Excel export button
             if not df_success_called.empty:
@@ -456,9 +464,12 @@ with tab3:
             st.markdown(f"**🔴 Danh sách đối tác Gọi Không Được (Thất bại):** {len(df_failed_called)} user")
             df_failed_disp = df_failed_called.copy()
             df_failed_disp['is_achieved'] = df_failed_disp['is_achieved'].map({1: 'Đạt', 0: 'Không đạt'})
-            st.dataframe(df_failed_disp[['username', 'phone', 'danh_hieu_chay', 'is_achieved']].rename(columns={
+            df_failed_render = df_failed_disp[['username', 'phone', 'danh_hieu_chay', 'is_achieved']].rename(columns={
                 'username': 'Tài khoản', 'phone': 'Số điện thoại', 'danh_hieu_chay': 'Danh hiệu chạy', 'is_achieved': 'Đạt ngày 5'
-            }), height=300)
+            })
+            df_failed_render.index = np.arange(1, len(df_failed_render) + 1)
+            st.dataframe(df_failed_render, height=300)
+
             
             # Excel export button
             if not df_failed_called.empty:
