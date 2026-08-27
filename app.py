@@ -89,7 +89,13 @@ with tab1:
             st.success(f"Đã đọc thành công file Excel! Tổng số dòng: {len(df_raw)}, Số cột: {len(df_raw.columns)}")
             
             with st.expander("Xem trước 5 dòng dữ liệu gốc"):
-                st.dataframe(df_raw.head())
+                raw_preview = df_raw.head().copy()
+                for col in raw_preview.columns:
+                    if pd.api.types.is_numeric_dtype(raw_preview[col]):
+                        raw_preview[col] = raw_preview[col].apply(
+                            lambda x: f"{int(round(x)):,}".replace(",", ".") if pd.notna(x) and isinstance(x, (int, float)) else x
+                        )
+                st.dataframe(raw_preview)
                 
             if st.button("🚀 Bắt đầu Sàng lọc dữ liệu", key="process_raw_btn"):
                 with st.spinner("Đang xử lý dữ liệu..."):
