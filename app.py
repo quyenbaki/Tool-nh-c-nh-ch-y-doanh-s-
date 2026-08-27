@@ -10,6 +10,17 @@ import io
 import db_helper
 import data_processor
 
+def format_vietnamese_number(val, suffix=""):
+    if pd.isna(val) or str(val).strip() in ["", "-", "nan", "None"]:
+        return ""
+    try:
+        # Convert to float and round to integer
+        num_val = float(str(val).replace(",", "").strip())
+        formatted = f"{int(round(num_val)):,}".replace(",", ".")
+        return f"{formatted} {suffix}".strip() if suffix else formatted
+    except Exception:
+        return str(val)
+
 # Page config
 st.set_page_config(
     page_title="Hệ thống Quản lý Cuộc gọi Nhắc nhở Doanh số",
@@ -91,10 +102,8 @@ with tab1:
             with st.expander("Xem trước 5 dòng dữ liệu gốc"):
                 raw_preview = df_raw.head().copy()
                 for col in raw_preview.columns:
-                    if pd.api.types.is_numeric_dtype(raw_preview[col]):
-                        raw_preview[col] = raw_preview[col].apply(
-                            lambda x: f"{int(round(x)):,}".replace(",", ".") if pd.notna(x) and isinstance(x, (int, float)) else x
-                        )
+                    raw_preview[col] = raw_preview[col].apply(lambda x: format_vietnamese_number(x))
+
                 raw_preview.index = np.arange(1, len(raw_preview) + 1)
                 st.dataframe(raw_preview)
 
@@ -132,9 +141,8 @@ with tab1:
                 ]
                 for col in cols_to_format:
                     if col in preview_df.columns:
-                        preview_df[col] = preview_df[col].apply(
-                            lambda x: f"{int(round(x)):,}".replace(",", ".") if pd.notna(x) and isinstance(x, (int, float)) else x
-                        )
+                        preview_df[col] = preview_df[col].apply(lambda x: format_vietnamese_number(x))
+
                 preview_df.index = np.arange(1, len(preview_df) + 1)
                 st.dataframe(preview_df)
 
@@ -228,7 +236,8 @@ with tab2:
         df_display['Gọi Thành công'] = df_display['success_calls'].astype(int)
         df_display['Gọi Không thành công'] = df_display['failed_calls'].astype(int)
         df_display['Trạng thái cuối'] = df_display['last_status'].fillna('Chưa gọi')
-        df_display['Tổng điểm chạy'] = df_display['sum_points'].apply(lambda x: f"{int(round(x)):,}".replace(",", ".") + " đ" if pd.notna(x) else "")
+        df_display['Tổng điểm chạy'] = df_display['sum_points'].apply(lambda x: format_vietnamese_number(x, "đ"))
+
 
         
         display_cols = [
@@ -264,7 +273,8 @@ with tab2:
                     target_user = st.selectbox("Chọn Tài khoản đối tác:", user_list)
                     # Show user phone & details
                     user_info = df_filtered[df_filtered['username'] == target_user].iloc[0]
-                    st.info(f"📞 SĐT: **{user_info['phone']}** | 🏆 Danh hiệu: **{user_info['danh_hieu_chay']}** | 💰 Điểm: **{user_info['sum_points']:,.0f}**")
+                    st.info(f"📞 SĐT: **{user_info['phone']}** | 🏆 Danh hiệu: **{user_info['danh_hieu_chay']}** | 💰 Điểm: **{format_vietnamese_number(user_info['sum_points'])}**")
+
                 with col_u2:
                     call_status = st.selectbox("Kết quả cuộc gọi:", ["Thành công", "Không thành công"])
                 with col_u3:
