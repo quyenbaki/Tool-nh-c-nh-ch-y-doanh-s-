@@ -66,14 +66,13 @@ def handle_sheets_errors(func):
             return func(*args, **kwargs)
         except gspread.exceptions.APIError as e:
             try:
-                # Capture the actual raw error response details
                 err_msg = str(e)
                 st.error(f"🔴 Lỗi liên kết Google Sheets API: {err_msg}")
                 st.markdown(
                     "### 💡 Hướng dẫn kiểm tra & sửa lỗi:\n"
-                    "1. **Chưa bật API:** Bạn phải vào Google Cloud Console và đảm bảo đã bật **cả hai API** sau cho dự án:\n"
-                    "   - **Google Sheets API** (Vui lòng vào Google Cloud bật API này)\n"
-                    "   - **Google Drive API** (Vui lòng vào Google Cloud bật API này)\n"
+                    "1. **Chưa bật API hoặc quá tải hạn ngạch (429):** Bạn phải vào Google Cloud Console và đảm bảo đã bật **cả hai API** sau cho dự án:\n"
+                    "   - **Google Sheets API**\n"
+                    "   - **Google Drive API**\n"
                     "2. **Chưa chia sẻ quyền tệp:** Vui lòng mở file Google Sheets của bạn, bấm nút **Chia sẻ (Share)** và thêm tài khoản email dịch vụ sau với quyền **Người chỉnh sửa (Editor)**:\n"
                     "   `qbaki-tool@nhac-nho-chay-so-qbaki.iam.gserviceaccount.com`\n"
                     "3. **Kiểm tra URL:** Đảm bảo đường link `spreadsheet_url` cấu hình trong Secrets của Streamlit đã chính xác."
@@ -81,8 +80,30 @@ def handle_sheets_errors(func):
             except Exception as display_err:
                 print(f"Failed to display error in UI: {display_err}")
             st.stop()
-
     return wrapper
+
+def open_spreadsheet(client, url):
+    """
+    Opens the spreadsheet by URL. Catches APIError and shows
+    detailed instructions in Streamlit.
+    """
+    try:
+        return client.open_by_url(url)
+    except gspread.exceptions.APIError as e:
+        try:
+            st.error(f"🔴 Lỗi kết nối Google Sheets API: {str(e)}")
+            st.markdown(
+                "### 💡 Hướng dẫn khắc phục lỗi kết nối:\n"
+                "1. **Chưa bật API:** Bạn phải vào Google Cloud Console và đảm bảo đã bật **cả hai API** sau cho dự án:\n"
+                "   - **Google Sheets API** (Bắt buộc)\n"
+                "   - **Google Drive API** (Bắt buộc)\n"
+                "2. **Chưa chia sẻ quyền tệp:** Vui lòng mở file Google Sheets của bạn, bấm nút **Chia sẻ (Share)** và thêm tài khoản email dịch vụ sau với quyền **Người chỉnh sửa (Editor)**:\n"
+                "   `qbaki-tool@nhac-nho-chay-so-qbaki.iam.gserviceaccount.com`\n"
+                "3. **URL sai hoặc không hợp lệ:** Đảm bảo đường link `spreadsheet_url` cấu hình trong Secrets của Streamlit đã chính xác."
+            )
+        except Exception as display_err:
+            print(f"Failed to display error in UI: {display_err}")
+        raise e
 
 def format_sheet_columns(ws, end_row):
     """Formats numeric columns in Google Sheets to show formatted numbers with thousands separator."""
@@ -105,12 +126,23 @@ def format_sheet_columns(ws, end_row):
         except Exception as e:
             print(f"Lỗi format {r}: {e}")
 
+@st.cache_data(ttl=15, show_spinner=False)
+@handle_sheets_errors
+def fetch_worksheet_records(sheet_name, url_str):
+    """
+    Cached function to fetch worksheet records.
+    Prevents API Rate Limit Exceeded (HTTP 429) by caching data for 15 seconds.
+    """
+    client, url = get_sheets_client()
+    sh = open_spreadsheet(client, url_str)
+    ws = sh.worksheet(sheet_name)
+    return ws.get_all_records()
 
 @handle_sheets_errors
 def init_db():
     """Initializes Google Sheets worksheets if they do not exist."""
     client, url = get_sheets_client()
-    sh = client.open_by_url(url)
+    sh = open_spreadsheet(client, url)
     
     # 1. Initialize 'call_lists' worksheet
     try:
@@ -144,10 +176,10 @@ def save_call_list(df, year, month):
     Uses batch write to ensure high performance and avoid rate limits.
     """
     client, url = get_sheets_client()
-    sh = client.open_by_url(url)
+    sh = open_spreadsheet(client, url)
     ws = sh.worksheet("call_lists")
     
-    # Fetch existing data
+    # Fetch existing data (uncached write preparation to ensure no overwrite conflicts)
     records = ws.get_all_records()
     headers = [
         "year", "month", "username", "phone", "total_b_point", 
@@ -229,17 +261,17 @@ def save_call_list(df, year, month):
     ws.clear()
     ws.update('A1', [headers] + values)
     format_sheet_columns(ws, len(values) + 1)
-
+    
+    # Invalidate cache so reads get fresh data immediately
+    st.cache_data.clear()
 
 @handle_sheets_errors
 def get_call_list(year, month):
     """Retrieves call list for a given month, joined with call statistics."""
     client, url = get_sheets_client()
-    sh = client.open_by_url(url)
     
-    # 1. Read call lists
-    ws_lists = sh.worksheet("call_lists")
-    records_lists = ws_lists.get_all_records()
+    # 1. Read call lists (cached)
+    records_lists = fetch_worksheet_records("call_lists", url)
     if not records_lists:
         return pd.DataFrame()
         
@@ -252,9 +284,8 @@ def get_call_list(year, month):
     if df_lists.empty:
         return pd.DataFrame()
         
-    # 2. Read call history
-    ws_history = sh.worksheet("call_history")
-    records_history = ws_history.get_all_records()
+    # 2. Read call history (cached)
+    records_history = fetch_worksheet_records("call_history", url)
     
     if records_history:
         df_history = pd.DataFrame(records_history)
@@ -293,20 +324,21 @@ def get_call_list(year, month):
 def add_call_log(year, month, username, status, note):
     """Appends a new call log entry to the history worksheet."""
     client, url = get_sheets_client()
-    sh = client.open_by_url(url)
+    sh = open_spreadsheet(client, url)
     ws = sh.worksheet("call_history")
     
     call_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     row = [int(year), int(month), str(username).strip(), call_date, str(status).strip(), str(note).strip()]
     ws.append_row(row)
+    
+    # Invalidate cache so reads get fresh data immediately
+    st.cache_data.clear()
 
 @handle_sheets_errors
 def get_call_history(year, month, username):
     """Gets all historical logs for a user in a specific month."""
     client, url = get_sheets_client()
-    sh = client.open_by_url(url)
-    ws = sh.worksheet("call_history")
-    records = ws.get_all_records()
+    records = fetch_worksheet_records("call_history", url)
     if not records:
         return pd.DataFrame()
         
@@ -329,7 +361,7 @@ def update_final_sales(df_final, year, month):
     Updates final_danh_hieu, final_sum_points, and is_achieved.
     """
     client, url = get_sheets_client()
-    sh = client.open_by_url(url)
+    sh = open_spreadsheet(client, url)
     ws = sh.worksheet("call_lists")
     
     records = ws.get_all_records()
@@ -436,8 +468,9 @@ def update_final_sales(df_final, year, month):
         ws.clear()
         ws.update('A1', [headers] + values)
         format_sheet_columns(ws, len(values) + 1)
-
         
+    # Invalidate cache so reads get fresh data immediately
+    st.cache_data.clear()
     return updated_count
 
 @handle_sheets_errors
@@ -491,9 +524,8 @@ def get_available_months():
     """Gets list of available Year-Month in database for filtering."""
     try:
         client, url = get_sheets_client()
-        sh = client.open_by_url(url)
-        ws = sh.worksheet("call_lists")
-        records = ws.get_all_records()
+        # Read from cached sheet
+        records = fetch_worksheet_records("call_lists", url)
         if not records:
             return []
             
