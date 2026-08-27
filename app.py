@@ -204,8 +204,8 @@ with tab2:
             status_filter = st.selectbox("Lọc theo trạng thái cuộc gọi:", [
                 "Tất cả", 
                 "Chưa gọi", 
-                "Gọi được (Thành công)", 
-                "Gọi không được (Thất bại)"
+                "Trả lời", 
+                "Không trả lời"
             ])
             
         # Apply search filter
@@ -217,14 +217,14 @@ with tab2:
             ]
             
         # Apply status filter
-        # A user is "Gọi được (Thành công)" if success_calls > 0
-        # A user is "Gọi không được (Thất bại)" if failed_calls > 0 and success_calls == 0
+        # A user is "Trả lời" if success_calls > 0
+        # A user is "Không trả lời" if failed_calls > 0 and success_calls == 0
         # A user is "Chưa gọi" if total_calls == 0
         if status_filter == "Chưa gọi":
             df_filtered = df_filtered[df_filtered['total_calls'] == 0]
-        elif status_filter == "Gọi được (Thành công)":
+        elif status_filter == "Trả lời":
             df_filtered = df_filtered[df_filtered['success_calls'] > 0]
-        elif status_filter == "Gọi không được (Thất bại)":
+        elif status_filter == "Không trả lời":
             df_filtered = df_filtered[(df_filtered['failed_calls'] > 0) & (df_filtered['success_calls'] == 0)]
 
         # Display main Table
@@ -233,8 +233,8 @@ with tab2:
         # Format df for display
         df_display = df_filtered.copy()
         df_display['Tổng cuộc gọi'] = df_display['total_calls'].astype(int)
-        df_display['Gọi Thành công'] = df_display['success_calls'].astype(int)
-        df_display['Gọi Không thành công'] = df_display['failed_calls'].astype(int)
+        df_display['Trả lời'] = df_display['success_calls'].astype(int)
+        df_display['Không trả lời'] = df_display['failed_calls'].astype(int)
         df_display['Trạng thái cuối'] = df_display['last_status'].fillna('Chưa gọi')
         df_display['Tổng điểm chạy'] = df_display['sum_points'].apply(lambda x: format_vietnamese_number(x, "đ"))
 
@@ -242,7 +242,7 @@ with tab2:
         
         display_cols = [
             'username', 'phone', 'danh_hieu_chay', 'Tổng điểm chạy', 
-            'Tổng cuộc gọi', 'Gọi Thành công', 'Gọi Không thành công', 
+            'Tổng cuộc gọi', 'Trả lời', 'Không trả lời', 
             'Trạng thái cuối', 'm1s_user_name', 'm3s_user_name'
         ]
         df_render = df_display[display_cols].rename(columns={
@@ -277,13 +277,14 @@ with tab2:
                     st.info(f"👤 Tài khoản: **{target_user}** | 🏆 Danh hiệu: **{user_info['danh_hieu_chay']}** | 💰 Điểm: **{format_vietnamese_number(user_info['sum_points'])}**")
 
                 with col_u2:
-                    call_status = st.selectbox("Kết quả cuộc gọi:", ["Thành công", "Không thành công"])
+                    call_status = st.selectbox("Kết quả cuộc gọi:", ["Trả lời", "Không trả lời"])
                 with col_u3:
                     call_note = st.text_input("Ghi chú cuộc gọi (Tùy chọn):")
                     
                 if st.button("💾 Lưu kết quả gọi", key="save_single_call"):
                     db_helper.add_call_log(sel_year, sel_month, target_user, call_status, call_note)
                     st.success(f"Đã lưu kết quả gọi cho số **{target_phone}** ({target_user}): {call_status}!")
+
                     st.rerun()
                     
                 # View History for selected user
@@ -304,7 +305,7 @@ with tab2:
             st.markdown("""
             **Yêu cầu file tải lên:**
             - Phải có cột tên **Tài khoản** (hoặc `Username`) hoặc cột **Số điện thoại** (hoặc `SĐT`, `Phone`) để khớp thông tin đối tác.
-            - Phải có cột tên **Kết quả** (hoặc `Trạng thái`, `Status`) chứa một trong hai giá trị: **Thành công** / **Không thành công** (hoặc `success`/`failed`).
+            - Phải có cột tên **Kết quả** (hoặc `Trạng thái`, `Status`) chứa một trong hai giá trị: **Trả lời** / **Không trả lời** (hoặc `success`/`failed`).
             - Có thể có cột **Ghi chú** (hoặc `Note`) để ghi lại thông tin chi tiết.
             """)
             
@@ -350,9 +351,9 @@ with tab2:
                             # Valid status mapper
                             def clean_status(val):
                                 val_str = str(val).strip().lower()
-                                if val_str in ['thành công', 'thanh cong', 'success', 'gọi được', 'ok']:
-                                    return 'Thành công'
-                                return 'Không thành công'
+                                if val_str in ['trả lời', 'tra loi', 'thành công', 'thanh cong', 'success', 'gọi được', 'ok']:
+                                    return 'Trả lời'
+                                return 'Không trả lời'
                                 
                             for _, row in df_bulk.iterrows():
                                 u_name = None
@@ -402,9 +403,9 @@ with tab3:
         st.subheader("📈 Chỉ số cuộc gọi trong tháng")
         m_col1, m_col2, m_col3, m_col4 = st.columns(4)
         m_col1.metric("Tổng số cần gọi", f"{summary['total_users']} user")
-        m_col2.metric("Gọi Thành công (Gọi được)", f"{summary['total_called_success']} user", 
+        m_col2.metric("Cuộc gọi Trả lời", f"{summary['total_called_success']} user", 
                      delta=f"{(summary['total_called_success']/summary['total_users']*100):.1f}%" if summary['total_users'] > 0 else "0%")
-        m_col3.metric("Gọi Thất bại (Không được)", f"{summary['total_called_failed']} user", 
+        m_col3.metric("Cuộc gọi Không trả lời", f"{summary['total_called_failed']} user", 
                      delta=f"-{(summary['total_called_failed']/summary['total_users']*100):.1f}%" if summary['total_users'] > 0 else "0%", delta_color="inverse")
         m_col4.metric("Chưa liên hệ", f"{summary['total_not_called']} user")
         
@@ -415,7 +416,7 @@ with tab3:
         with chart_col1:
             # Pie Chart for Calling status distribution
             pie_data = pd.DataFrame({
-                'Trạng thái': ['Gọi được (Thành công)', 'Gọi không được (Thất bại)', 'Chưa gọi'],
+                'Trạng thái': ['Trả lời', 'Không trả lời', 'Chưa gọi'],
                 'Số lượng': [summary['total_called_success'], summary['total_called_failed'], summary['total_not_called']]
             })
             # Filter zero rows
@@ -428,8 +429,8 @@ with tab3:
                     title="Tỷ lệ trạng thái cuộc gọi",
                     color='Trạng thái',
                     color_discrete_map={
-                        'Gọi được (Thành công)': '#2ca02c',
-                        'Gọi không được (Thất bại)': '#d62728',
+                        'Trả lời': '#2ca02c',
+                        'Không trả lời': '#d62728',
                         'Chưa gọi': '#ff7f0e'
                     }
                 )
@@ -469,8 +470,8 @@ with tab3:
         st.subheader("📋 Báo cáo danh sách chi tiết")
         
         # Categorized dataframes for download
-        df_success_called = df_details[df_details['call_status_cat'] == 'Gọi được (Thành công)'].copy()
-        df_failed_called = df_details[df_details['call_status_cat'] == 'Gọi không được (Thất bại)'].copy()
+        df_success_called = df_details[df_details['call_status_cat'] == 'Trả lời'].copy()
+        df_failed_called = df_details[df_details['call_status_cat'] == 'Không trả lời'].copy()
         
         # Clear columns for clean download
         download_cols = ['username', 'phone', 'danh_hieu_chay', 'sum_points', 'call_count', 'final_danh_hieu', 'final_sum_points', 'is_achieved']
@@ -478,7 +479,7 @@ with tab3:
         rep_col1, rep_col2 = st.columns(2)
         
         with rep_col1:
-            st.markdown(f"**🟢 Danh sách đối tác Gọi Được (Thành công):** {len(df_success_called)} user")
+            st.markdown(f"**🟢 Danh sách đối tác Trả lời:** {len(df_success_called)} user")
             # Convert to displayable form
             df_success_disp = df_success_called.copy()
             df_success_disp['is_achieved'] = df_success_disp['is_achieved'].map({1: 'Đạt', 0: 'Không đạt'})
@@ -494,14 +495,14 @@ with tab3:
                 out_success = io.BytesIO()
                 df_success_called[download_cols].to_excel(out_success, index=False)
                 st.download_button(
-                    label="📥 Xuất file Excel gọi thành công",
+                    label="📥 Xuất file Excel cuộc gọi Trả lời",
                     data=out_success.getvalue(),
-                    file_name=f"Bao_cao_Goi_Thanh_Cong_T{sel_month}_{sel_year}.xlsx",
+                    file_name=f"Bao_cao_Cuoc_Goi_Tra_Loi_T{sel_month}_{sel_year}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
                 
         with rep_col2:
-            st.markdown(f"**🔴 Danh sách đối tác Gọi Không Được (Thất bại):** {len(df_failed_called)} user")
+            st.markdown(f"**🔴 Danh sách đối tác Không trả lời:** {len(df_failed_called)} user")
             df_failed_disp = df_failed_called.copy()
             df_failed_disp['is_achieved'] = df_failed_disp['is_achieved'].map({1: 'Đạt', 0: 'Không đạt'})
             df_failed_render = df_failed_disp[['username', 'phone', 'danh_hieu_chay', 'is_achieved']].rename(columns={
@@ -516,9 +517,9 @@ with tab3:
                 out_failed = io.BytesIO()
                 df_failed_called[download_cols].to_excel(out_failed, index=False)
                 st.download_button(
-                    label="📥 Xuất file Excel gọi thất bại",
+                    label="📥 Xuất file Excel cuộc gọi Không trả lời",
                     data=out_failed.getvalue(),
-                    file_name=f"Bao_cao_Goi_That_Bai_T{sel_month}_{sel_year}.xlsx",
+                    file_name=f"Bao_cao_Cuoc_Goi_Khong_Tra_Loi_T{sel_month}_{sel_year}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
@@ -534,13 +535,13 @@ with tab3:
             
             col_c1, col_c2, col_c3 = st.columns(3)
             with col_c1:
-                st.info(f"**Nhóm gọi thành công:**\n- Số lượng: {summary['total_called_success']} đối tác\n- Đạt doanh số: **{summary['called_success_achieved']}** ({success_ach_pct:.1f}%)\n- Không đạt: **{summary['called_success_not_achieved']}**")
+                st.info(f"**Nhóm cuộc gọi Trả lời:**\n- Số lượng: {summary['total_called_success']} đối tác\n- Đạt doanh số: **{summary['called_success_achieved']}** ({success_ach_pct:.1f}%)\n- Không đạt: **{summary['called_success_not_achieved']}**")
             with col_c2:
-                st.warning(f"**Nhóm gọi thất bại:**\n- Số lượng: {summary['total_called_failed']} đối tác\n- Đạt doanh số: **{summary['called_failed_achieved']}** ({failed_ach_pct:.1f}%)\n- Không đạt: **{summary['called_failed_not_achieved']}**")
+                st.warning(f"**Nhóm cuộc gọi Không trả lời:**\n- Số lượng: {summary['total_called_failed']} đối tác\n- Đạt doanh số: **{summary['called_failed_achieved']}** ({failed_ach_pct:.1f}%)\n- Không đạt: **{summary['called_failed_not_achieved']}**")
             with col_c3:
                 st.error(f"**Nhóm chưa gọi:**\n- Số lượng: {summary['total_not_called']} đối tác\n- Đạt doanh số: **{summary['not_called_achieved']}** ({not_called_ach_pct:.1f}%)\n- Không đạt: **{summary['not_called_not_achieved']}**")
                 
-            st.success(f"💡 Nhìn chung, việc gọi điện thành công giúp tăng tỷ lệ đạt doanh số từ **{failed_ach_pct:.1f}%** (nếu gọi thất bại) lên **{success_ach_pct:.1f}%**! (Chênh lệch: **{(success_ach_pct - failed_ach_pct):.1f}%**)")
+            st.success(f"💡 Nhìn chung, việc gọi điện kết nối thành công giúp tăng tỷ lệ đạt doanh số từ **{failed_ach_pct:.1f}%** (nếu không trả lời) lên **{success_ach_pct:.1f}%**! (Chênh lệch: **{(success_ach_pct - failed_ach_pct):.1f}%**)")
 
 # ----------------- TAB 4: DAY 5 SALES UPDATE -----------------
 with tab4:

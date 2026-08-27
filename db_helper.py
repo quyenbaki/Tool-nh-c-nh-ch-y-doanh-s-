@@ -303,8 +303,8 @@ def get_call_list(year, month):
         
         stats = df_history.groupby('username').agg(
             total_calls=('status', 'count'),
-            success_calls=('status', lambda s: (s == 'Thành công').sum()),
-            failed_calls=('status', lambda s: (s == 'Không thành công').sum()),
+            success_calls=('status', lambda s: s.isin(['Thành công', 'Trả lời']).sum()),
+            failed_calls=('status', lambda s: s.isin(['Không thành công', 'Không trả lời']).sum()),
             last_status=('status', 'last')
         ).reset_index()
     else:
@@ -491,24 +491,24 @@ def get_report_data(year, month):
         if row['total_calls'] == 0:
             return 'Chưa gọi'
         elif row['success_calls'] > 0:
-            return 'Gọi được (Thành công)'
+            return 'Trả lời'
         else:
-            return 'Gọi không được (Thất bại)'
+            return 'Không trả lời'
             
     df_calls['call_status_cat'] = df_calls.apply(categorize_call_status, axis=1)
     df_calls['is_achieved'] = pd.to_numeric(df_calls['is_achieved'], errors='coerce').fillna(0).astype(int)
     
     summary = {
         'total_users': total_users,
-        'total_called_success': int((df_calls['call_status_cat'] == 'Gọi được (Thành công)').sum()),
-        'total_called_failed': int((df_calls['call_status_cat'] == 'Gọi không được (Thất bại)').sum()),
+        'total_called_success': int((df_calls['call_status_cat'] == 'Trả lời').sum()),
+        'total_called_failed': int((df_calls['call_status_cat'] == 'Không trả lời').sum()),
         'total_not_called': int((df_calls['call_status_cat'] == 'Chưa gọi').sum()),
         
-        'called_success_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Gọi được (Thành công)') & (df_calls['is_achieved'] == 1)].shape[0]),
-        'called_success_not_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Gọi được (Thành công)') & (df_calls['is_achieved'] == 0)].shape[0]),
+        'called_success_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Trả lời') & (df_calls['is_achieved'] == 1)].shape[0]),
+        'called_success_not_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Trả lời') & (df_calls['is_achieved'] == 0)].shape[0]),
         
-        'called_failed_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Gọi không được (Thất bại)') & (df_calls['is_achieved'] == 1)].shape[0]),
-        'called_failed_not_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Gọi không được (Thất bại)') & (df_calls['is_achieved'] == 0)].shape[0]),
+        'called_failed_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Không trả lời') & (df_calls['is_achieved'] == 1)].shape[0]),
+        'called_failed_not_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Không trả lời') & (df_calls['is_achieved'] == 0)].shape[0]),
         
         'not_called_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Chưa gọi') & (df_calls['is_achieved'] == 1)].shape[0]),
         'not_called_not_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Chưa gọi') & (df_calls['is_achieved'] == 0)].shape[0]),
