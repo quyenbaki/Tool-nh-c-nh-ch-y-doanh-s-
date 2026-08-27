@@ -117,7 +117,18 @@ with tab1:
                 
                 # Show processed preview
                 st.subheader("📝 Danh sách preview (Đã sắp xếp cột theo mẫu gọi)")
-                st.dataframe(processed_df)
+                preview_df = processed_df.copy()
+                cols_to_format = [
+                    "Total B Point", "Total B Point Wf Confirm", "Total B Point Wf Payment", 
+                    "Total B Point Processing", "Total B Point Delivery", "B Point", "Sum Points"
+                ]
+                for col in cols_to_format:
+                    if col in preview_df.columns:
+                        preview_df[col] = preview_df[col].apply(
+                            lambda x: f"{int(round(x)):,}".replace(",", ".") if pd.notna(x) and isinstance(x, (int, float)) else x
+                        )
+                st.dataframe(preview_df)
+
                 
                 # Let user download the filtered Excel directly
                 output = io.BytesIO()
@@ -207,7 +218,8 @@ with tab2:
         df_display['Gọi Thành công'] = df_display['success_calls'].astype(int)
         df_display['Gọi Không thành công'] = df_display['failed_calls'].astype(int)
         df_display['Trạng thái cuối'] = df_display['last_status'].fillna('Chưa gọi')
-        df_display['Tổng điểm chạy'] = df_display['sum_points'].apply(lambda x: f"{x:,.0f} đ")
+        df_display['Tổng điểm chạy'] = df_display['sum_points'].apply(lambda x: f"{int(round(x)):,}".replace(",", ".") + " đ" if pd.notna(x) else "")
+
         
         display_cols = [
             'username', 'phone', 'danh_hieu_chay', 'Tổng điểm chạy', 
