@@ -1,193 +1,268 @@
-import sqlite3
+import streamlit as st
+import gspread
+from google.oauth2.service_account import Credentials
+import os
+import tomllib
 import pandas as pd
 from datetime import datetime
-import os
 import re
 
-DB_PATH = 'sales_calls.db'
+def load_config():
+    """
+    Loads Google Sheets configuration from Streamlit Secrets (for production)
+    or local .streamlit/secrets.toml (for local development).
+    """
+    # 1. Try st.secrets (production Streamlit Cloud)
+    try:
+        if st.secrets and "gcp_service_account" in st.secrets:
+            return dict(st.secrets["gcp_service_account"]), st.secrets["spreadsheet_url"]
+    except:
+        pass
+        
+    # 2. Try local .streamlit/secrets.toml (local development)
+    for path in ['.streamlit/secrets.toml', '../.streamlit/secrets.toml']:
+        if os.path.exists(path):
+            try:
+                with open(path, 'rb') as f:
+                    data = tomllib.load(f)
+                    return data["gcp_service_account"], data["spreadsheet_url"]
+            except Exception as e:
+                print(f"Lỗi đọc secrets.toml tại {path}: {e}")
+                
+    # 3. Fallback check for relative paths depending on execute context
+    alt_path = os.path.join(os.path.dirname(__file__), '.streamlit', 'secrets.toml')
+    if os.path.exists(alt_path):
+        try:
+            with open(alt_path, 'rb') as f:
+                data = tomllib.load(f)
+                return data["gcp_service_account"], data["spreadsheet_url"]
+        except Exception as e:
+            print(f"Lỗi đọc secrets.toml tại {alt_path}: {e}")
 
-def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    raise ValueError("Không tìm thấy thông tin cấu hình Google Sheets trong st.secrets hoặc secrets.toml.")
+
+def get_sheets_client():
+    creds_dict, url = load_config()
+    
+    # Handle private key newline formatting
+    if "private_key" in creds_dict:
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    client = gspread.authorize(creds)
+    return client, url
 
 def init_db():
-    """Initializes the database tables."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    """Initializes Google Sheets worksheets if they do not exist."""
+    client, url = get_sheets_client()
+    sh = client.open_by_url(url)
     
-    # Table for storing call list targets
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS call_lists (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            year INTEGER,
-            month INTEGER,
-            username TEXT,
-            phone TEXT,
-            total_b_point REAL,
-            total_b_point_wf_confirm REAL,
-            total_b_point_wf_payment REAL,
-            total_b_point_wf_processing REAL,
-            total_b_point_wf_delivery REAL,
-            danh_hieu_chay TEXT,
-            b_point REAL,
-            calculated_datetime TEXT,
-            m1s_user_name TEXT,
-            m3s_user_name TEXT,
-            sum_points REAL,
-            final_danh_hieu TEXT,
-            final_sum_points REAL DEFAULT 0.0,
-            is_achieved INTEGER DEFAULT 0,
-            import_timestamp TEXT,
-            UNIQUE(year, month, username)
-        )
-    ''')
-    
-    # Table for storing call history attempts
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS call_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            year INTEGER,
-            month INTEGER,
-            username TEXT,
-            call_date TEXT,
-            status TEXT,
-            note TEXT,
-            FOREIGN KEY (year, month, username) REFERENCES call_lists (year, month, username)
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
+    # 1. Initialize 'call_lists' worksheet
+    try:
+        sh.worksheet("call_lists")
+    except gspread.exceptions.WorksheetNotFound:
+        headers = [
+            "year", "month", "username", "phone", "total_b_point", 
+            "total_b_point_wf_confirm", "total_b_point_wf_payment", 
+            "total_b_point_wf_processing", "total_b_point_wf_delivery", 
+            "danh_hieu_chay", "b_point", "calculated_datetime", 
+            "m1s_user_name", "m3s_user_name", "sum_points", 
+            "final_danh_hieu", "final_sum_points", "is_achieved", "import_timestamp"
+        ]
+        sh.add_worksheet(title="call_lists", rows=1000, cols=20)
+        ws = sh.worksheet("call_lists")
+        ws.append_row(headers)
+        
+    # 2. Initialize 'call_history' worksheet
+    try:
+        sh.worksheet("call_history")
+    except gspread.exceptions.WorksheetNotFound:
+        headers = ["year", "month", "username", "call_date", "status", "note"]
+        sh.add_worksheet(title="call_history", rows=1000, cols=10)
+        ws = sh.worksheet("call_history")
+        ws.append_row(headers)
 
 def save_call_list(df, year, month):
     """
-    Saves or updates the filtered call list in the database.
-    Ensures existing call notes/progress are not wiped if user re-uploads.
+    Saves or updates the filtered call list in the Google Sheet.
+    Uses batch write to ensure high performance and avoid rate limits.
     """
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    client, url = get_sheets_client()
+    sh = client.open_by_url(url)
+    ws = sh.worksheet("call_lists")
     
+    # Fetch existing data
+    records = ws.get_all_records()
+    headers = [
+        "year", "month", "username", "phone", "total_b_point", 
+        "total_b_point_wf_confirm", "total_b_point_wf_payment", 
+        "total_b_point_wf_processing", "total_b_point_wf_delivery", 
+        "danh_hieu_chay", "b_point", "calculated_datetime", 
+        "m1s_user_name", "m3s_user_name", "sum_points", 
+        "final_danh_hieu", "final_sum_points", "is_achieved", "import_timestamp"
+    ]
+    
+    if records:
+        df_existing = pd.DataFrame(records)
+    else:
+        df_existing = pd.DataFrame(columns=headers)
+        
     import_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Standardize data types for matching
+    df_existing['year'] = pd.to_numeric(df_existing['year'], errors='coerce').fillna(0).astype(int)
+    df_existing['month'] = pd.to_numeric(df_existing['month'], errors='coerce').fillna(0).astype(int)
+    df_existing['username'] = df_existing['username'].astype(str).str.strip()
+    
+    df_existing.set_index(['year', 'month', 'username'], inplace=True, drop=False)
     
     for _, row in df.iterrows():
         username = str(row['Username']).strip()
-        phone = str(row['Phone']).strip()
+        idx = (int(year), int(month), username)
         
-        # Check if record already exists
-        cursor.execute('''
-            SELECT id, final_danh_hieu, final_sum_points, is_achieved 
-            FROM call_lists 
-            WHERE year = ? AND month = ? AND username = ?
-        ''', (year, month, username))
+        row_data = {
+            'year': int(year),
+            'month': int(month),
+            'username': username,
+            'phone': str(row['Phone']).strip(),
+            'total_b_point': float(row['Total B Point']),
+            'total_b_point_wf_confirm': float(row['Total B Point Wf Confirm']),
+            'total_b_point_wf_payment': float(row['Total B Point Wf Payment']),
+            'total_b_point_wf_processing': float(row['Total B Point Processing']),
+            'total_b_point_wf_delivery': float(row['Total B Point Delivery']),
+            'danh_hieu_chay': str(row['Danh hiệu Chạy']),
+            'b_point': float(row['B Point']),
+            'calculated_datetime': str(row['Calculated Datetime']),
+            'm1s_user_name': str(row['M1s User Name']),
+            'm3s_user_name': str(row['M3s User Name']),
+            'sum_points': float(row['Sum Points']),
+            'final_danh_hieu': '',
+            'final_sum_points': 0.0,
+            'is_achieved': 0,
+            'import_timestamp': import_time
+        }
         
-        existing = cursor.fetchone()
-        
-        if existing:
-            # Update values, but preserve final day-5 results if already updated
-            cursor.execute('''
-                UPDATE call_lists
-                SET phone = ?, total_b_point = ?, total_b_point_wf_confirm = ?, 
-                    total_b_point_wf_payment = ?, total_b_point_wf_processing = ?, 
-                    total_b_point_wf_delivery = ?, danh_hieu_chay = ?, b_point = ?, 
-                    calculated_datetime = ?, m1s_user_name = ?, m3s_user_name = ?, 
-                    sum_points = ?
-                WHERE year = ? AND month = ? AND username = ?
-            ''', (
-                phone, 
-                float(row['Total B Point']), 
-                float(row['Total B Point Wf Confirm']),
-                float(row['Total B Point Wf Payment']), 
-                float(row['Total B Point Processing']), 
-                float(row['Total B Point Delivery']), 
-                str(row['Danh hiệu Chạy']), 
-                float(row['B Point']), 
-                str(row['Calculated Datetime']), 
-                str(row['M1s User Name']), 
-                str(row['M3s User Name']), 
-                float(row['Sum Points']),
-                year, month, username
-            ))
+        if idx in df_existing.index:
+            # Update matching row (preserve day 5 fields & import time)
+            df_existing.loc[idx, [
+                'phone', 'total_b_point', 'total_b_point_wf_confirm', 
+                'total_b_point_wf_payment', 'total_b_point_wf_processing', 
+                'total_b_point_wf_delivery', 'danh_hieu_chay', 'b_point', 
+                'calculated_datetime', 'm1s_user_name', 'm3s_user_name', 'sum_points'
+            ]] = [
+                row_data['phone'], row_data['total_b_point'], row_data['total_b_point_wf_confirm'],
+                row_data['total_b_point_wf_payment'], row_data['total_b_point_wf_processing'],
+                row_data['total_b_point_wf_delivery'], row_data['danh_hieu_chay'], row_data['b_point'],
+                row_data['calculated_datetime'], row_data['m1s_user_name'], row_data['m3s_user_name'],
+                row_data['sum_points']
+            ]
         else:
-            # Insert new record
-            cursor.execute('''
-                INSERT INTO call_lists (
-                    year, month, username, phone, total_b_point, 
-                    total_b_point_wf_confirm, total_b_point_wf_payment, 
-                    total_b_point_wf_processing, total_b_point_wf_delivery, 
-                    danh_hieu_chay, b_point, calculated_datetime, 
-                    m1s_user_name, m3s_user_name, sum_points, import_timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                year, month, username, phone, 
-                float(row['Total B Point']), 
-                float(row['Total B Point Wf Confirm']),
-                float(row['Total B Point Wf Payment']), 
-                float(row['Total B Point Processing']), 
-                float(row['Total B Point Delivery']), 
-                str(row['Danh hiệu Chạy']), 
-                float(row['B Point']), 
-                str(row['Calculated Datetime']), 
-                str(row['M1s User Name']), 
-                str(row['M3s User Name']), 
-                float(row['Sum Points']),
-                import_time
-            ))
+            # Append new record
+            new_row_df = pd.DataFrame([row_data])
+            new_row_df.index = pd.MultiIndex.from_tuples([idx], names=['year', 'month', 'username'])
+            df_existing = pd.concat([df_existing, new_row_df])
             
-    conn.commit()
-    conn.close()
+    df_existing.reset_index(drop=True, inplace=True)
+    df_existing.fillna('', inplace=True)
+    
+    # Ensure exact column order
+    df_existing = df_existing[headers]
+    values = df_existing.values.tolist()
+    
+    # Batch update worksheet
+    ws.clear()
+    ws.update('A1', [headers] + values)
 
 def get_call_list(year, month):
-    """
-    Retrieves the call list for the given month, annotated with call statistics.
-    Returns a DataFrame.
-    """
-    conn = get_db_connection()
+    """Retrieves call list for a given month, joined with call statistics."""
+    client, url = get_sheets_client()
+    sh = client.open_by_url(url)
     
-    query = '''
-        SELECT 
-            cl.*,
-            COUNT(ch.id) as total_calls,
-            SUM(CASE WHEN ch.status = 'Thành công' THEN 1 ELSE 0 END) as success_calls,
-            SUM(CASE WHEN ch.status = 'Không thành công' THEN 1 ELSE 0 END) as failed_calls,
-            (SELECT status FROM call_history WHERE year = cl.year AND month = cl.month AND username = cl.username ORDER BY call_date DESC LIMIT 1) as last_status
-        FROM call_lists cl
-        LEFT JOIN call_history ch ON cl.year = ch.year AND cl.month = ch.month AND cl.username = ch.username
-        WHERE cl.year = ? AND cl.month = ?
-        GROUP BY cl.id
-    '''
+    # 1. Read call lists
+    ws_lists = sh.worksheet("call_lists")
+    records_lists = ws_lists.get_all_records()
+    if not records_lists:
+        return pd.DataFrame()
+        
+    df_lists = pd.DataFrame(records_lists)
+    df_lists = df_lists[
+        (pd.to_numeric(df_lists['year'], errors='coerce') == int(year)) & 
+        (pd.to_numeric(df_lists['month'], errors='coerce') == int(month))
+    ]
     
-    df = pd.read_sql_query(query, conn, params=(year, month))
-    conn.close()
-    return df
+    if df_lists.empty:
+        return pd.DataFrame()
+        
+    # 2. Read call history
+    ws_history = sh.worksheet("call_history")
+    records_history = ws_history.get_all_records()
+    
+    if records_history:
+        df_history = pd.DataFrame(records_history)
+        df_history = df_history[
+            (pd.to_numeric(df_history['year'], errors='coerce') == int(year)) & 
+            (pd.to_numeric(df_history['month'], errors='coerce') == int(month))
+        ]
+    else:
+        df_history = pd.DataFrame(columns=["year", "month", "username", "call_date", "status", "note"])
+        
+    # 3. Aggregate history metrics
+    if not df_history.empty:
+        df_history['username'] = df_history['username'].astype(str).str.strip()
+        df_history = df_history.sort_values('call_date')
+        
+        stats = df_history.groupby('username').agg(
+            total_calls=('status', 'count'),
+            success_calls=('status', lambda s: (s == 'Thành công').sum()),
+            failed_calls=('status', lambda s: (s == 'Không thành công').sum()),
+            last_status=('status', 'last')
+        ).reset_index()
+    else:
+        stats = pd.DataFrame(columns=['username', 'total_calls', 'success_calls', 'failed_calls', 'last_status'])
+        
+    df_lists['username'] = df_lists['username'].astype(str).str.strip()
+    
+    # Join lists with call metrics
+    merged = pd.merge(df_lists, stats, on='username', how='left')
+    merged['total_calls'] = merged['total_calls'].fillna(0).astype(int)
+    merged['success_calls'] = merged['success_calls'].fillna(0).astype(int)
+    merged['failed_calls'] = merged['failed_calls'].fillna(0).astype(int)
+    
+    return merged
 
 def add_call_log(year, month, username, status, note):
-    """Adds a call attempt record to the database."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    """Appends a new call log entry to the history worksheet."""
+    client, url = get_sheets_client()
+    sh = client.open_by_url(url)
+    ws = sh.worksheet("call_history")
     
     call_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    cursor.execute('''
-        INSERT INTO call_history (year, month, username, call_date, status, note)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (year, month, username, call_date, status, note))
-    
-    conn.commit()
-    conn.close()
+    row = [int(year), int(month), str(username).strip(), call_date, str(status).strip(), str(note).strip()]
+    ws.append_row(row)
 
 def get_call_history(year, month, username):
-    """Gets call attempts history for a user in a specific month."""
-    conn = get_db_connection()
-    query = '''
-        SELECT call_date, status, note 
-        FROM call_history 
-        WHERE year = ? AND month = ? AND username = ?
-        ORDER BY call_date DESC
-    '''
-    df = pd.read_sql_query(query, conn, params=(year, month, username))
-    conn.close()
-    return df
+    """Gets all historical logs for a user in a specific month."""
+    client, url = get_sheets_client()
+    sh = client.open_by_url(url)
+    ws = sh.worksheet("call_history")
+    records = ws.get_all_records()
+    if not records:
+        return pd.DataFrame()
+        
+    df = pd.DataFrame(records)
+    df = df[
+        (pd.to_numeric(df['year'], errors='coerce') == int(year)) & 
+        (pd.to_numeric(df['month'], errors='coerce') == int(month)) & 
+        (df['username'].astype(str).str.strip() == str(username).strip())
+    ]
+    if df.empty:
+        return pd.DataFrame()
+        
+    return df.sort_values('call_date', ascending=False)[['call_date', 'status', 'note']]
 
 def update_final_sales(df_final, year, month):
     """
@@ -195,15 +270,22 @@ def update_final_sales(df_final, year, month):
     For all users currently in the calling list for this month, find their updated status in df_final.
     Updates final_danh_hieu, final_sum_points, and is_achieved.
     """
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    client, url = get_sheets_client()
+    sh = client.open_by_url(url)
+    ws = sh.worksheet("call_lists")
     
-    # 1. Fetch current users in calling list
-    cursor.execute('SELECT username, danh_hieu_chay FROM call_lists WHERE year = ? AND month = ?', (year, month))
-    users = cursor.fetchall()
+    records = ws.get_all_records()
+    if not records:
+        return 0
+        
+    df_lists = pd.DataFrame(records)
+    df_lists['year'] = pd.to_numeric(df_lists['year'], errors='coerce').fillna(0).astype(int)
+    df_lists['month'] = pd.to_numeric(df_lists['month'], errors='coerce').fillna(0).astype(int)
+    df_lists['username'] = df_lists['username'].astype(str).str.strip()
     
-    if not users:
-        conn.close()
+    # Filter list for target month
+    this_month_mask = (df_lists['year'] == int(year)) & (df_lists['month'] == int(month))
+    if not this_month_mask.any():
         return 0
         
     # Map final dataframe column patterns
@@ -225,169 +307,140 @@ def update_final_sales(df_final, year, month):
             resolved_cols[std_name] = matched_col
             
     if 'Username' not in resolved_cols or 'Danh hiệu Chạy' not in resolved_cols:
-        conn.close()
         raise ValueError("File doanh số cuối ngày 5 thiếu cột Username hoặc Danh hiệu.")
         
     username_col = resolved_cols['Username']
     danh_hieu_col = resolved_cols['Danh hiệu Chạy']
     
-    # Convert final df username column to string, strip spaces for matching
     df_final = df_final.copy()
     df_final[username_col] = df_final[username_col].astype(str).str.strip()
-    
-    # Index for fast lookup
     final_lookup = df_final.set_index(username_col)
     
     updated_count = 0
     
-    for row in users:
-        username = row['username']
-        initial_danh_hieu = row['danh_hieu_chay']
-        
-        if username in final_lookup.index:
-            user_data = final_lookup.loc[username]
+    for idx, row in df_lists.iterrows():
+        if row['year'] == int(year) and row['month'] == int(month):
+            username = row['username']
+            initial_danh_hieu = row['danh_hieu_chay']
             
-            # Handle duplicates if username is not unique in final list
-            if isinstance(user_data, pd.DataFrame):
-                user_data = user_data.iloc[0]
-                
-            final_danh_hieu = str(user_data[danh_hieu_col]).strip()
-            
-            # Sum final points
-            def get_numeric(col_key):
-                if col_key in resolved_cols:
-                    col_name = resolved_cols[col_key]
-                    val = re.sub(r'[^\d\.]', '', str(user_data[col_name]))
-
-                    try:
-                        return float(val) if val else 0.0
-                    except:
-                        return 0.0
-                return 0.0
-                
-            sum_points = (get_numeric('Total B Point') + 
-                          get_numeric('Total B Point Wf Confirm') + 
-                          get_numeric('Total B Point Wf Payment') + 
-                          get_numeric('Total B Point Wf Processing') + 
-                          get_numeric('Total B Point Wf Delivery'))
-            
-            # Determine if they achieved target
-            # They achieve target if they are 'Đạt C1', 'Đạt C2', 'Đạt C3' or if their points exceed target
-            is_achieved = 0
-            final_danh_hieu_lower = final_danh_hieu.lower()
-            
-            # Targets based on the running rank they were called for
-            # running C1 -> Đạt C1 (>=30M)
-            # running C2 -> Đạt C2 (>=60M)
-            # running C3 -> Đạt C3 (>=120M)
-            if 'đạt' in final_danh_hieu_lower:
-                is_achieved = 1
-            else:
-                # Fallback to points threshold
-                if 'chạy c1' in initial_danh_hieu.lower() and sum_points >= 30000000:
-                    is_achieved = 1
-                elif 'chạy c2' in initial_danh_hieu.lower() and sum_points >= 60000000:
-                    is_achieved = 1
-                elif 'chạy c3' in initial_danh_hieu.lower() and sum_points >= 120000000:
-                    is_achieved = 1
+            if username in final_lookup.index:
+                user_data = final_lookup.loc[username]
+                if isinstance(user_data, pd.DataFrame):
+                    user_data = user_data.iloc[0]
                     
-            cursor.execute('''
-                UPDATE call_lists
-                SET final_danh_hieu = ?, final_sum_points = ?, is_achieved = ?
-                WHERE year = ? AND month = ? AND username = ?
-            ''', (final_danh_hieu, sum_points, is_achieved, year, month, username))
-            updated_count += 1
-            
-    conn.commit()
-    conn.close()
+                final_danh_hieu = str(user_data[danh_hieu_col]).strip()
+                
+                def get_numeric(col_key):
+                    if col_key in resolved_cols:
+                        col_name = resolved_cols[col_key]
+                        val = re.sub(r'[^\d\.]', '', str(user_data[col_name]))
+                        try:
+                            return float(val) if val else 0.0
+                        except:
+                            return 0.0
+                    return 0.0
+                    
+                sum_points = (get_numeric('Total B Point') + 
+                              get_numeric('Total B Point Wf Confirm') + 
+                              get_numeric('Total B Point Wf Payment') + 
+                              get_numeric('Total B Point Wf Processing') + 
+                              get_numeric('Total B Point Wf Delivery'))
+                
+                is_achieved = 0
+                final_danh_hieu_lower = final_danh_hieu.lower()
+                
+                if 'đạt' in final_danh_hieu_lower:
+                    is_achieved = 1
+                else:
+                    if 'chạy c1' in initial_danh_hieu.lower() and sum_points >= 30000000:
+                        is_achieved = 1
+                    elif 'chạy c2' in initial_danh_hieu.lower() and sum_points >= 60000000:
+                        is_achieved = 1
+                    elif 'chạy c3' in initial_danh_hieu.lower() and sum_points >= 120000000:
+                        is_achieved = 1
+                        
+                df_lists.loc[idx, 'final_danh_hieu'] = final_danh_hieu
+                df_lists.loc[idx, 'final_sum_points'] = sum_points
+                df_lists.loc[idx, 'is_achieved'] = int(is_achieved)
+                updated_count += 1
+                
+    if updated_count > 0:
+        headers = [
+            "year", "month", "username", "phone", "total_b_point", 
+            "total_b_point_wf_confirm", "total_b_point_wf_payment", 
+            "total_b_point_wf_processing", "total_b_point_wf_delivery", 
+            "danh_hieu_chay", "b_point", "calculated_datetime", 
+            "m1s_user_name", "m3s_user_name", "sum_points", 
+            "final_danh_hieu", "final_sum_points", "is_achieved", "import_timestamp"
+        ]
+        df_lists.fillna('', inplace=True)
+        values = df_lists[headers].values.tolist()
+        ws.clear()
+        ws.update('A1', [headers] + values)
+        
     return updated_count
 
 def get_report_data(year, month):
-    """
-    Compiles detailed stats for reporting.
-    Returns:
-    - Summary counts
-    - List of successful calls
-    - List of unsuccessful calls
-    - Achieved vs not achieved breakdown
-    """
-    conn = get_db_connection()
-    
-    # 1. Total targets
-    cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*) FROM call_lists WHERE year = ? AND month = ?', (year, month))
-    total_users = cursor.fetchone()[0]
-    
-    if total_users == 0:
-        conn.close()
+    """Compiles detailed stats for reporting."""
+    df_calls = get_call_list(year, month)
+    if df_calls.empty:
         return None
         
-    # 2. Get call results detail
-    # A user is "Gọi được" (Called successfully) if they have at least one successful call log.
-    # A user is "Gọi không được" (Called unsuccessfully) if they have calls but none is successful.
-    # A user is "Chưa gọi" (Not called) if they have 0 calls.
-    query = '''
-        SELECT 
-            cl.username,
-            cl.phone,
-            cl.danh_hieu_chay,
-            cl.sum_points,
-            cl.final_danh_hieu,
-            cl.final_sum_points,
-            cl.is_achieved,
-            COUNT(ch.id) as call_count,
-            SUM(CASE WHEN ch.status = 'Thành công' THEN 1 ELSE 0 END) as success_count,
-            SUM(CASE WHEN ch.status = 'Không thành công' THEN 1 ELSE 0 END) as failed_count
-        FROM call_lists cl
-        LEFT JOIN call_history ch ON cl.year = ch.year AND cl.month = ch.month AND cl.username = ch.username
-        WHERE cl.year = ? AND cl.month = ?
-        GROUP BY cl.id
-    '''
+    total_users = len(df_calls)
     
-    df_details = pd.read_sql_query(query, conn, params=(year, month))
-    conn.close()
-    
-    # Categorize
     def categorize_call_status(row):
-        if row['call_count'] == 0:
+        if row['total_calls'] == 0:
             return 'Chưa gọi'
-        elif row['success_count'] > 0:
+        elif row['success_calls'] > 0:
             return 'Gọi được (Thành công)'
         else:
             return 'Gọi không được (Thất bại)'
             
-    df_details['call_status_cat'] = df_details.apply(categorize_call_status, axis=1)
+    df_calls['call_status_cat'] = df_calls.apply(categorize_call_status, axis=1)
+    df_calls['is_achieved'] = pd.to_numeric(df_calls['is_achieved'], errors='coerce').fillna(0).astype(int)
     
     summary = {
         'total_users': total_users,
-        'total_called_success': int((df_details['call_status_cat'] == 'Gọi được (Thành công)').sum()),
-        'total_called_failed': int((df_details['call_status_cat'] == 'Gọi không được (Thất bại)').sum()),
-        'total_not_called': int((df_details['call_status_cat'] == 'Chưa gọi').sum()),
+        'total_called_success': int((df_calls['call_status_cat'] == 'Gọi được (Thành công)').sum()),
+        'total_called_failed': int((df_calls['call_status_cat'] == 'Gọi không được (Thất bại)').sum()),
+        'total_not_called': int((df_calls['call_status_cat'] == 'Chưa gọi').sum()),
         
-        # Achieved stats for Called Successfully
-        'called_success_achieved': int(df_details[(df_details['call_status_cat'] == 'Gọi được (Thành công)') & (df_details['is_achieved'] == 1)].shape[0]),
-        'called_success_not_achieved': int(df_details[(df_details['call_status_cat'] == 'Gọi được (Thành công)') & (df_details['is_achieved'] == 0)].shape[0]),
+        'called_success_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Gọi được (Thành công)') & (df_calls['is_achieved'] == 1)].shape[0]),
+        'called_success_not_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Gọi được (Thành công)') & (df_calls['is_achieved'] == 0)].shape[0]),
         
-        # Achieved stats for Called Unsuccessfully
-        'called_failed_achieved': int(df_details[(df_details['call_status_cat'] == 'Gọi không được (Thất bại)') & (df_details['is_achieved'] == 1)].shape[0]),
-        'called_failed_not_achieved': int(df_details[(df_details['call_status_cat'] == 'Gọi không được (Thất bại)') & (df_details['is_achieved'] == 0)].shape[0]),
+        'called_failed_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Gọi không được (Thất bại)') & (df_calls['is_achieved'] == 1)].shape[0]),
+        'called_failed_not_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Gọi không được (Thất bại)') & (df_calls['is_achieved'] == 0)].shape[0]),
         
-        # Achieved stats for Not Called
-        'not_called_achieved': int(df_details[(df_details['call_status_cat'] == 'Chưa gọi') & (df_details['is_achieved'] == 1)].shape[0]),
-        'not_called_not_achieved': int(df_details[(df_details['call_status_cat'] == 'Chưa gọi') & (df_details['is_achieved'] == 0)].shape[0]),
+        'not_called_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Chưa gọi') & (df_calls['is_achieved'] == 1)].shape[0]),
+        'not_called_not_achieved': int(df_calls[(df_calls['call_status_cat'] == 'Chưa gọi') & (df_calls['is_achieved'] == 0)].shape[0]),
     }
     
     return {
         'summary': summary,
-        'details': df_details
+        'details': df_calls
     }
 
 def get_available_months():
     """Gets list of available Year-Month in database for filtering."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT DISTINCT year, month FROM call_lists ORDER BY year DESC, month DESC')
-    rows = cursor.fetchall()
-    conn.close()
-    return [{'year': r[0], 'month': r[1], 'label': f"Tháng {r[1]} - Năm {r[0]}"} for r in rows]
-
+    try:
+        client, url = get_sheets_client()
+        sh = client.open_by_url(url)
+        ws = sh.worksheet("call_lists")
+        records = ws.get_all_records()
+        if not records:
+            return []
+            
+        df = pd.DataFrame(records)
+        if df.empty or 'year' not in df.columns or 'month' not in df.columns:
+            return []
+            
+        df['year'] = pd.to_numeric(df['year'], errors='coerce').fillna(0).astype(int)
+        df['month'] = pd.to_numeric(df['month'], errors='coerce').fillna(0).astype(int)
+        
+        df = df[(df['year'] != 0) & (df['month'] != 0)]
+        df_unique = df[['year', 'month']].drop_duplicates().sort_values(['year', 'month'], ascending=[False, False])
+        
+        return [{'year': int(r['year']), 'month': int(r['month']), 'label': f"Tháng {r['month']} - Năm {r['year']}"} for _, r in df_unique.iterrows()]
+    except Exception as e:
+        print(f"Error fetching months: {e}")
+        return []
