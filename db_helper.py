@@ -386,6 +386,11 @@ def get_report_data(year, month):
     if df_calls.empty:
         return None
         
+    # Add alias columns to match app.py expected columns
+    df_calls['call_count'] = df_calls['total_calls']
+    df_calls['success_count'] = df_calls['success_calls']
+    df_calls['failed_count'] = df_calls['failed_calls']
+        
     total_users = len(df_calls)
     
     def categorize_call_status(row):
