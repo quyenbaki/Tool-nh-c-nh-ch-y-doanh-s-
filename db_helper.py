@@ -80,7 +80,8 @@ def handle_sheets_errors(func):
                 )
             except Exception as display_err:
                 print(f"Failed to display error in UI: {display_err}")
-            raise e
+            st.stop()
+
     return wrapper
 
 @handle_sheets_errors
