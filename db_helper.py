@@ -84,6 +84,28 @@ def handle_sheets_errors(func):
 
     return wrapper
 
+def format_sheet_columns(ws, end_row):
+    """Formats numeric columns in Google Sheets to show formatted numbers with thousands separator."""
+    if end_row <= 1:
+        return
+    ranges = [
+        f"E2:I{end_row}",
+        f"K2:K{end_row}",
+        f"O2:O{end_row}",
+        f"Q2:Q{end_row}"
+    ]
+    for r in ranges:
+        try:
+            ws.format(r, {
+                "numberFormat": {
+                    "type": "NUMBER",
+                    "pattern": "#,##0"
+                }
+            })
+        except Exception as e:
+            print(f"Lỗi format {r}: {e}")
+
+
 @handle_sheets_errors
 def init_db():
     """Initializes Google Sheets worksheets if they do not exist."""
@@ -206,6 +228,8 @@ def save_call_list(df, year, month):
     # Batch update worksheet
     ws.clear()
     ws.update('A1', [headers] + values)
+    format_sheet_columns(ws, len(values) + 1)
+
 
 @handle_sheets_errors
 def get_call_list(year, month):
@@ -411,6 +435,8 @@ def update_final_sales(df_final, year, month):
         values = df_lists[headers].values.tolist()
         ws.clear()
         ws.update('A1', [headers] + values)
+        format_sheet_columns(ws, len(values) + 1)
+
         
     return updated_count
 

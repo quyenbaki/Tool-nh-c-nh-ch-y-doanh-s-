@@ -95,7 +95,9 @@ with tab1:
                         raw_preview[col] = raw_preview[col].apply(
                             lambda x: f"{int(round(x)):,}".replace(",", ".") if pd.notna(x) and isinstance(x, (int, float)) else x
                         )
+                raw_preview.index = np.arange(1, len(raw_preview) + 1)
                 st.dataframe(raw_preview)
+
                 
             if st.button("🚀 Bắt đầu Sàng lọc dữ liệu", key="process_raw_btn"):
                 with st.spinner("Đang xử lý dữ liệu..."):
