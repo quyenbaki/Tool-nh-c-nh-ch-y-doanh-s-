@@ -264,25 +264,26 @@ with tab2:
             st.subheader("📝 Nhập kết quả cuộc gọi")
             
             # Selectbox containing filtered usernames
-            user_list = df_filtered['username'].tolist()
-            if not user_list:
-                st.info("Không có user nào khớp bộ lọc để chọn.")
+            phone_list = df_filtered['phone'].astype(str).str.strip().unique().tolist()
+            if not phone_list:
+                st.info("Không có số điện thoại nào khớp bộ lọc để chọn.")
             else:
                 col_u1, col_u2, col_u3 = st.columns([2, 1, 2])
                 with col_u1:
-                    target_user = st.selectbox("Chọn Tài khoản đối tác:", user_list)
-                    # Show user phone & details
-                    user_info = df_filtered[df_filtered['username'] == target_user].iloc[0]
-                    st.info(f"📞 SĐT: **{user_info['phone']}** | 🏆 Danh hiệu: **{user_info['danh_hieu_chay']}** | 💰 Điểm: **{format_vietnamese_number(user_info['sum_points'])}**")
+                    target_phone = st.selectbox("Chọn Số điện thoại đối tác:", phone_list)
+                    # Show user details
+                    user_info = df_filtered[df_filtered['phone'].astype(str).str.strip() == target_phone].iloc[0]
+                    target_user = user_info['username']
+                    st.info(f"👤 Tài khoản: **{target_user}** | 🏆 Danh hiệu: **{user_info['danh_hieu_chay']}** | 💰 Điểm: **{format_vietnamese_number(user_info['sum_points'])}**")
 
                 with col_u2:
                     call_status = st.selectbox("Kết quả cuộc gọi:", ["Thành công", "Không thành công"])
                 with col_u3:
-                    call_note = st.text_input("Ghi chú cuộc gọi (ví dụ: Thuê bao, hẹn gọi lại, hứa chạy doanh số...):")
+                    call_note = st.text_input("Ghi chú cuộc gọi (Tùy chọn):")
                     
                 if st.button("💾 Lưu kết quả gọi", key="save_single_call"):
                     db_helper.add_call_log(sel_year, sel_month, target_user, call_status, call_note)
-                    st.success(f"Đã lưu kết quả gọi cho tài khoản **{target_user}**: {call_status}!")
+                    st.success(f"Đã lưu kết quả gọi cho số **{target_phone}** ({target_user}): {call_status}!")
                     st.rerun()
                     
                 # View History for selected user
@@ -302,7 +303,7 @@ with tab2:
             st.subheader("📥 Tải lên File Kết quả gọi hàng loạt")
             st.markdown("""
             **Yêu cầu file tải lên:**
-            - Phải có cột tên **Tài khoản** (hoặc `Username`) để khớp thông tin đối tác.
+            - Phải có cột tên **Tài khoản** (hoặc `Username`) hoặc cột **Số điện thoại** (hoặc `SĐT`, `Phone`) để khớp thông tin đối tác.
             - Phải có cột tên **Kết quả** (hoặc `Trạng thái`, `Status`) chứa một trong hai giá trị: **Thành công** / **Không thành công** (hoặc `success`/`failed`).
             - Có thể có cột **Ghi chú** (hoặc `Note`) để ghi lại thông tin chi tiết.
             """)
@@ -321,16 +322,31 @@ with tab2:
                     
                     # Match columns
                     user_col = data_processor.find_column_by_patterns(df_bulk, ['username', 'tài khoản', 'user'])
+                    phone_col = data_processor.find_column_by_patterns(df_bulk, ['số điện thoại', 'sđt', 'phone', 'telephone'])
                     status_col = data_processor.find_column_by_patterns(df_bulk, ['kết quả', 'trạng thái', 'status', 'result'])
                     note_col = data_processor.find_column_by_patterns(df_bulk, ['ghi chú', 'note', 'comment'])
                     
-                    if not user_col or not status_col:
-                        st.error("Không tìm thấy cột 'Tài khoản/Username' hoặc cột 'Kết quả/Trạng thái' trong file. Vui lòng đặt lại tiêu đề cột.")
+                    if not status_col:
+                        st.error("Không tìm thấy cột 'Kết quả/Trạng thái' trong file. Vui lòng đặt lại tiêu đề cột.")
+                    elif not user_col and not phone_col:
+                        st.error("Không tìm thấy cột 'Tài khoản/Username' hoặc cột 'Số điện thoại/SĐT' trong file để khớp thông tin đối tác.")
                     else:
                         if st.button("🚀 Bắt đầu Import Kết quả gọi", key="run_bulk_call_btn"):
                             success_count = 0
                             error_count = 0
                             
+                            # Build phone-to-username lookup mapping
+                            phone_to_user = {}
+                            if not df_calls.empty:
+                                for _, r in df_calls.iterrows():
+                                    p = str(r['phone']).strip().replace(" ", "").replace("-", "")
+                                    if p:
+                                        phone_to_user[p] = r['username']
+                                        if p.startswith('0'):
+                                            phone_to_user[p[1:]] = r['username']
+                                        else:
+                                            phone_to_user['0' + p] = r['username']
+                                            
                             # Valid status mapper
                             def clean_status(val):
                                 val_str = str(val).strip().lower()
@@ -339,9 +355,21 @@ with tab2:
                                 return 'Không thành công'
                                 
                             for _, row in df_bulk.iterrows():
-                                u_name = str(row[user_col]).strip()
-                                # Check if this user is in our call list for this month
-                                if u_name in df_calls['username'].values:
+                                u_name = None
+                                
+                                # 1. Match by Username first
+                                if user_col:
+                                    u_val = str(row[user_col]).strip()
+                                    if u_val in df_calls['username'].values:
+                                        u_name = u_val
+                                        
+                                # 2. Match by Phone Number if username failed
+                                if not u_name and phone_col:
+                                    p_val = str(row[phone_col]).strip().replace(" ", "").replace("-", "")
+                                    if p_val in phone_to_user:
+                                        u_name = phone_to_user[p_val]
+                                        
+                                if u_name:
                                     status_val = clean_status(row[status_col])
                                     note_val = str(row[note_col]).strip() if note_col and not pd.isna(row[note_col]) else ''
                                     
@@ -352,7 +380,7 @@ with tab2:
                                     
                             st.success(f"Đã nhập thành công kết quả gọi của {success_count} đối tác!")
                             if error_count > 0:
-                                st.warning(f"Bỏ qua {error_count} dòng do tài khoản không nằm trong danh sách cần gọi của Tháng {sel_month}/{sel_year}.")
+                                st.warning(f"Bỏ qua {error_count} dòng do không khớp Số điện thoại hoặc Tài khoản nào trong danh sách cần gọi của Tháng {sel_month}/{sel_year}.")
                             st.rerun()
                             
                 except Exception as e:
