@@ -191,33 +191,16 @@ def save_call_list(df, year, month):
     ]
     
     if records:
-        df_existing = pd.DataFrame(records)
+        df_existing = pd.DataFrame(records).astype(object)
     else:
-        df_existing = pd.DataFrame(columns=headers)
+        df_existing = pd.DataFrame(columns=headers).astype(object)
         
     import_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    # Standardize data types for matching
+    # Standardize data types for index columns
     df_existing['year'] = pd.to_numeric(df_existing['year'], errors='coerce').fillna(0).astype(int)
     df_existing['month'] = pd.to_numeric(df_existing['month'], errors='coerce').fillna(0).astype(int)
     df_existing['username'] = df_existing['username'].astype(str).str.strip()
-    df_existing['phone'] = df_existing['phone'].astype(str).str.strip()
-    
-    # Cast float columns to float to avoid pandas type enforcement errors
-    float_cols = [
-        'total_b_point', 'total_b_point_wf_confirm', 'total_b_point_wf_payment', 
-        'total_b_point_wf_processing', 'total_b_point_wf_delivery', 'b_point', 
-        'sum_points', 'final_sum_points'
-    ]
-    for col in float_cols:
-        if col in df_existing.columns:
-            df_existing[col] = pd.to_numeric(df_existing[col], errors='coerce').fillna(0.0).astype(float)
-            
-    # Cast other string columns
-    str_cols = ['danh_hieu_chay', 'calculated_datetime', 'm1s_user_name', 'm3s_user_name', 'final_danh_hieu', 'import_timestamp']
-    for col in str_cols:
-        if col in df_existing.columns:
-            df_existing[col] = df_existing[col].astype(str).str.strip()
     
     df_existing.set_index(['year', 'month', 'username'], inplace=True, drop=False)
     
@@ -412,14 +395,10 @@ def update_final_sales(df_final, year, month):
     if not records:
         return 0
         
-    df_lists = pd.DataFrame(records)
+    df_lists = pd.DataFrame(records).astype(object)
     df_lists['year'] = pd.to_numeric(df_lists['year'], errors='coerce').fillna(0).astype(int)
     df_lists['month'] = pd.to_numeric(df_lists['month'], errors='coerce').fillna(0).astype(int)
     df_lists['username'] = df_lists['username'].astype(str).str.strip()
-    df_lists['phone'] = df_lists['phone'].astype(str).str.strip()
-    df_lists['final_danh_hieu'] = df_lists['final_danh_hieu'].astype(str).str.strip()
-    df_lists['final_sum_points'] = pd.to_numeric(df_lists['final_sum_points'], errors='coerce').fillna(0.0).astype(float)
-    df_lists['is_achieved'] = pd.to_numeric(df_lists['is_achieved'], errors='coerce').fillna(0).astype(int)
     
     # Filter list for target month
     this_month_mask = (df_lists['year'] == int(year)) & (df_lists['month'] == int(month))
