@@ -201,6 +201,23 @@ def save_call_list(df, year, month):
     df_existing['year'] = pd.to_numeric(df_existing['year'], errors='coerce').fillna(0).astype(int)
     df_existing['month'] = pd.to_numeric(df_existing['month'], errors='coerce').fillna(0).astype(int)
     df_existing['username'] = df_existing['username'].astype(str).str.strip()
+    df_existing['phone'] = df_existing['phone'].astype(str).str.strip()
+    
+    # Cast float columns to float to avoid pandas type enforcement errors
+    float_cols = [
+        'total_b_point', 'total_b_point_wf_confirm', 'total_b_point_wf_payment', 
+        'total_b_point_wf_processing', 'total_b_point_wf_delivery', 'b_point', 
+        'sum_points', 'final_sum_points'
+    ]
+    for col in float_cols:
+        if col in df_existing.columns:
+            df_existing[col] = pd.to_numeric(df_existing[col], errors='coerce').fillna(0.0).astype(float)
+            
+    # Cast other string columns
+    str_cols = ['danh_hieu_chay', 'calculated_datetime', 'm1s_user_name', 'm3s_user_name', 'final_danh_hieu', 'import_timestamp']
+    for col in str_cols:
+        if col in df_existing.columns:
+            df_existing[col] = df_existing[col].astype(str).str.strip()
     
     df_existing.set_index(['year', 'month', 'username'], inplace=True, drop=False)
     
