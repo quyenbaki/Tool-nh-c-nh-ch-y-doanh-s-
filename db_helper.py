@@ -416,6 +416,10 @@ def update_final_sales(df_final, year, month):
     df_lists['year'] = pd.to_numeric(df_lists['year'], errors='coerce').fillna(0).astype(int)
     df_lists['month'] = pd.to_numeric(df_lists['month'], errors='coerce').fillna(0).astype(int)
     df_lists['username'] = df_lists['username'].astype(str).str.strip()
+    df_lists['phone'] = df_lists['phone'].astype(str).str.strip()
+    df_lists['final_danh_hieu'] = df_lists['final_danh_hieu'].astype(str).str.strip()
+    df_lists['final_sum_points'] = pd.to_numeric(df_lists['final_sum_points'], errors='coerce').fillna(0.0).astype(float)
+    df_lists['is_achieved'] = pd.to_numeric(df_lists['is_achieved'], errors='coerce').fillna(0).astype(int)
     
     # Filter list for target month
     this_month_mask = (df_lists['year'] == int(year)) & (df_lists['month'] == int(month))
