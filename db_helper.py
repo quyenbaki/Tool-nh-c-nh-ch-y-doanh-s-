@@ -335,6 +335,33 @@ def add_call_log(year, month, username, status, note):
     st.cache_data.clear()
 
 @handle_sheets_errors
+def add_call_logs_batch(year, month, logs):
+    """Appends multiple call log entries to the history worksheet in a single batch API call."""
+    if not logs:
+        return
+    client, url = get_sheets_client()
+    sh = open_spreadsheet(client, url)
+    ws = sh.worksheet("call_history")
+    
+    call_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    rows = []
+    for log in logs:
+        rows.append([
+            int(year),
+            int(month),
+            str(log['username']).strip(),
+            call_date,
+            str(log['status']).strip(),
+            str(log['note']).strip()
+        ])
+    
+    ws.append_rows(rows)
+    
+    # Invalidate cache so reads get fresh data immediately
+    st.cache_data.clear()
+
+
+@handle_sheets_errors
 def get_call_history(year, month, username):
     """Gets all historical logs for a user in a specific month."""
     client, url = get_sheets_client()
