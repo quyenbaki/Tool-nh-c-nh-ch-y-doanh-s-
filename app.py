@@ -355,6 +355,7 @@ with tab2:
                                     return 'Trả lời'
                                 return 'Không trả lời'
                                 
+                            new_logs = []
                             for _, row in df_bulk.iterrows():
                                 u_name = None
                                 
@@ -373,12 +374,18 @@ with tab2:
                                 if u_name:
                                     status_val = clean_status(row[status_col])
                                     note_val = str(row[note_col]).strip() if note_col and not pd.isna(row[note_col]) else ''
-                                    
-                                    db_helper.add_call_log(sel_year, sel_month, u_name, status_val, note_val)
+                                    new_logs.append({
+                                        'username': u_name,
+                                        'status': status_val,
+                                        'note': note_val
+                                    })
                                     success_count += 1
                                 else:
                                     error_count += 1
                                     
+                            if new_logs:
+                                db_helper.add_call_logs_batch(sel_year, sel_month, new_logs)
+                                
                             st.success(f"Đã nhập thành công kết quả gọi của {success_count} đối tác!")
                             if error_count > 0:
                                 st.warning(f"Bỏ qua {error_count} dòng do không khớp Số điện thoại hoặc Tài khoản nào trong danh sách cần gọi của Tháng {sel_month}/{sel_year}.")
