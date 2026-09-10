@@ -64,7 +64,7 @@ else:
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"**Thời gian hệ thống:** {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-st.sidebar.markdown("**Phiên bản:** v1.0.0")
+st.sidebar.markdown("**Phiên bản:** v1.0.1")
 
 # Tabs definition
 tab1, tab2, tab3, tab4 = st.tabs([
