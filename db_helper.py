@@ -276,6 +276,18 @@ def get_call_list(year, month):
         return pd.DataFrame()
         
     df_lists = pd.DataFrame(records_lists)
+    list_cols = [
+        "year", "month", "username", "phone", "total_b_point", 
+        "total_b_point_wf_confirm", "total_b_point_wf_payment", 
+        "total_b_point_wf_processing", "total_b_point_wf_delivery", 
+        "danh_hieu_chay", "b_point", "calculated_datetime", 
+        "m1s_user_name", "m3s_user_name", "sum_points", 
+        "final_danh_hieu", "final_sum_points", "is_achieved", "import_timestamp"
+    ]
+    for col in list_cols:
+        if col not in df_lists.columns:
+            df_lists[col] = None
+
     df_lists = df_lists[
         (pd.to_numeric(df_lists['year'], errors='coerce') == int(year)) & 
         (pd.to_numeric(df_lists['month'], errors='coerce') == int(month))
@@ -287,14 +299,18 @@ def get_call_list(year, month):
     # 2. Read call history (cached)
     records_history = fetch_worksheet_records("call_history", url)
     
+    hist_cols = ["year", "month", "username", "call_date", "status", "note"]
     if records_history:
         df_history = pd.DataFrame(records_history)
+        for col in hist_cols:
+            if col not in df_history.columns:
+                df_history[col] = None
         df_history = df_history[
             (pd.to_numeric(df_history['year'], errors='coerce') == int(year)) & 
             (pd.to_numeric(df_history['month'], errors='coerce') == int(month))
         ]
     else:
-        df_history = pd.DataFrame(columns=["year", "month", "username", "call_date", "status", "note"])
+        df_history = pd.DataFrame(columns=hist_cols)
         
     # 3. Aggregate history metrics
     if not df_history.empty:
@@ -370,6 +386,10 @@ def get_call_history(year, month, username):
         return pd.DataFrame()
         
     df = pd.DataFrame(records)
+    hist_cols = ["year", "month", "username", "call_date", "status", "note"]
+    for col in hist_cols:
+        if col not in df.columns:
+            df[col] = None
     df = df[
         (pd.to_numeric(df['year'], errors='coerce') == int(year)) & 
         (pd.to_numeric(df['month'], errors='coerce') == int(month)) & 
@@ -396,6 +416,18 @@ def update_final_sales(df_final, year, month):
         return 0
         
     df_lists = pd.DataFrame(records).astype(object)
+    list_cols = [
+        "year", "month", "username", "phone", "total_b_point", 
+        "total_b_point_wf_confirm", "total_b_point_wf_payment", 
+        "total_b_point_wf_processing", "total_b_point_wf_delivery", 
+        "danh_hieu_chay", "b_point", "calculated_datetime", 
+        "m1s_user_name", "m3s_user_name", "sum_points", 
+        "final_danh_hieu", "final_sum_points", "is_achieved", "import_timestamp"
+    ]
+    for col in list_cols:
+        if col not in df_lists.columns:
+            df_lists[col] = None
+
     df_lists['year'] = pd.to_numeric(df_lists['year'], errors='coerce').fillna(0).astype(int)
     df_lists['month'] = pd.to_numeric(df_lists['month'], errors='coerce').fillna(0).astype(int)
     df_lists['username'] = df_lists['username'].astype(str).str.strip()
